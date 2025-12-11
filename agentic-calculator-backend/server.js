@@ -14,9 +14,12 @@ app.post("/ask", async (req, res) => {
   if (!question) return res.status(400).json({ error: "Question is required" });
 
   try {
+    console.log("Received question:", question);
     const answer = await runAgent(question);
+    console.log("Agent answer:", answer);
     res.json({ answer });
   } catch (error) {
+    console.error("Agent error:", error);
     res.status(500).json({ error: error.message });
   }
 });
