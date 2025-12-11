@@ -8,8 +8,9 @@
 .app-container {
   min-height: 100vh;
   display: flex;
+  background-image: url('/images/bg.png');
   flex-direction: column;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  /*background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);*/
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
@@ -66,7 +67,7 @@
 }
 
 .input-group {
-  background: white;
+  background: rgb(168, 209, 237);
   padding: 2.5rem;
   border-radius: 20px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
@@ -523,7 +524,7 @@ button:disabled {
 
 /* History Section */
 .history-section {
-  background: white;
+  background: rgb(168, 209, 237);
   border-radius: 20px;
   padding: 2.5rem;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
