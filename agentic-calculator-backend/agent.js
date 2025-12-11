@@ -15,9 +15,13 @@ export async function runAgent(prompt) {
       const result = Function('"use strict"; const Math = globalThis.Math; return (' + mathExpression + ')')();
       
       // Format the result to avoid floating point issues
-      const formattedResult = Number.isInteger(result) ? result : parseFloat(result.toFixed(2));
-      
-      return `${mathExpression} = ${formattedResult}`;
+      const formattedResult = Number.isInteger(result)
+        ? result
+        : parseFloat(Number(result).toPrecision(12));
+
+      const recommendations = generateRecommendations(mathExpression, result, prompt);
+
+      return `${mathExpression} = ${formattedResult}\n\nRecommendations:\n${recommendations}`;
     } catch (e) {
       console.error("Calculation error:", e.message);
       return `Invalid expression: ${mathExpression}. Please check your math notation.`;
@@ -32,6 +36,52 @@ export async function runAgent(prompt) {
     console.error("Agent error:", error);
     throw new Error(`Agent processing failed: ${error.message}`);
   }
+}
+
+function generateRecommendations(expression, result, originalPrompt) {
+  const recs = [];
+
+  // Parentheses and order of operations
+  if (/[()]/.test(expression)) {
+    recs.push("This expression uses parentheses — operations inside parentheses are evaluated first.");
+  } else if (/[+\-]/.test(expression) && /[*\/]/.test(expression)) {
+    recs.push("Order of operations applied: multiplication/division before addition/subtraction.");
+  }
+
+  // Percentage handling
+  if (/\%|percent|per cent|\bof\b/i.test(originalPrompt)) {
+    // Try to extract simple "X% of Y" pattern for clearer recommendation
+    const m = originalPrompt.match(/(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)/i);
+    if (m) {
+      const pct = parseFloat(m[1]);
+      const base = parseFloat(m[2]);
+      const pctValue = (pct / 100) * base;
+      recs.push(`${pct}% of ${base} = ${pctValue}. Use this to compute relative shares or discounts.`);
+    } else {
+      recs.push("This involves a percentage — remember that X% of Y means (X/100) * Y.");
+    }
+  }
+
+  // Exponent handling
+  if (/Math\.pow|\^|\bpower\b/i.test(originalPrompt) || /Math\.pow/.test(expression)) {
+    recs.push("Exponentiation detected — e.g. 2^10 = 1024. For large exponents, consider scientific notation.");
+  }
+
+  // Floating point / rounding suggestion
+  if (!Number.isInteger(result)) {
+    const rounded = parseFloat(Number(result).toPrecision(6));
+    recs.push(`Result is a decimal — consider rounding: ${rounded} (rounded to 6 significant digits).`);
+  }
+
+  // Large/small numbers suggestion
+  if (Math.abs(result) >= 1e6 || (Math.abs(result) > 0 && Math.abs(result) < 1e-3)) {
+    recs.push("Result has large/small magnitude — scientific notation may be helpful.");
+  }
+
+  // Practical next steps
+  recs.push("Next: verify units (if applicable), try related calculations, or ask for step-by-step breakdown.");
+
+  return recs.map((r) => `- ${r}`).join("\n");
 }
 
 function extractAndProcessExpression(prompt) {

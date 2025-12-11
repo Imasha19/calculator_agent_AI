@@ -4,6 +4,7 @@ import "./App.css";
 function App() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [recommendations, setRecommendations] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
@@ -29,7 +30,16 @@ function App() {
       }
 
       const data = await res.json();
-      setAnswer(data.answer);
+      // Parse recommendations if present
+      if (data.answer && data.answer.includes('\n\nRecommendations:\n')) {
+        const parts = data.answer.split('\n\nRecommendations:\n');
+        setAnswer(parts[0]);
+        const recLines = parts[1].split(/\n+/).map((l) => l.replace(/^\s*-\s*/, '').trim()).filter(Boolean);
+        setRecommendations(recLines);
+      } else {
+        setAnswer(data.answer);
+        setRecommendations([]);
+      }
       
       // Add to history
       setHistory(prev => [
@@ -39,6 +49,45 @@ function App() {
     } catch (err) {
       setError(`Failed to get answer: ${err.message}`);
       console.error("Error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Ask using a provided example immediately (sets question and sends request)
+  const askExample = async (exampleQuestion) => {
+    setQuestion(exampleQuestion);
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch("http://localhost:5000/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: exampleQuestion }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server error: ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (data.answer && data.answer.includes('\n\nRecommendations:\n')) {
+        const parts = data.answer.split('\n\nRecommendations:\n');
+        setAnswer(parts[0]);
+        const recLines = parts[1].split(/\n+/).map((l) => l.replace(/^\s*-\s*/, '').trim()).filter(Boolean);
+        setRecommendations(recLines);
+      } else {
+        setAnswer(data.answer);
+        setRecommendations([]);
+      }
+      setHistory((prev) => [
+        { question: exampleQuestion, answer: data.answer, timestamp: new Date().toLocaleTimeString() },
+        ...prev.slice(0, 4),
+      ]);
+    } catch (err) {
+      setError(`Failed to get answer: ${err.message}`);
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -116,7 +165,23 @@ function App() {
                   </div>
                   <div className="answer-section">
                     <h3>📊 Answer:</h3>
-                    <p className="answer-text">{answer}</p>
+                    {answer && (
+                      <ul className="answer-list">
+                        {answer.split(/\r?\n/).filter(Boolean).map((line, idx) => (
+                          <li key={idx}>{line}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {recommendations.length > 0 && (
+                      <div className="recommendations">
+                        <h4>🔎 Recommendations</h4>
+                        <ul>
+                          {recommendations.map((r, i) => (
+                            <li key={i}>{r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -125,10 +190,10 @@ function App() {
             <div className="examples-section">
               <h4>💡 Try asking:</h4>
               <div className="example-tags">
-                <span onClick={() => setQuestion("What is 25 * 4 + 18?")}>25 * 4 + 18</span>
-                <span onClick={() => setQuestion("Calculate 15% of 300")}>15% of 300</span>
-                <span onClick={() => setQuestion("How much is 2^10?")}>2^10</span>
-                <span onClick={() => setQuestion("Solve: (15 + 7) * 3")}>(15 + 7) * 3</span>
+                <span onClick={() => askExample("What is 25 * 4 + 18?")}>25 * 4 + 18</span>
+                <span onClick={() => askExample("Calculate 15% of 300")}>15% of 300</span>
+                <span onClick={() => askExample("How much is 2^10?")}>2^10</span>
+                <span onClick={() => askExample("Solve: (15 + 7) * 3")}>(15 + 7) * 3</span>
               </div>
             </div>
           </div>
