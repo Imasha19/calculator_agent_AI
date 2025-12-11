@@ -5,6 +5,8 @@ function App() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [recommendations, setRecommendations] = useState([]);
+  const [breakdown, setBreakdown] = useState("");
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
@@ -17,6 +19,7 @@ function App() {
 
     setLoading(true);
     setError("");
+    setShowBreakdown(false); // Close breakdown when asking new question
     
     try {
       const res = await fetch("http://localhost:5000/ask", {
@@ -59,6 +62,7 @@ function App() {
     setQuestion(exampleQuestion);
     setLoading(true);
     setError("");
+    setShowBreakdown(false); // Close breakdown when asking new question
 
     try {
       const res = await fetch("http://localhost:5000/ask", {
@@ -101,6 +105,75 @@ function App() {
 
   const clearHistory = () => {
     setHistory([]);
+  };
+
+  // Load history item and display its answer
+  const loadHistoryItem = (item) => {
+    console.log("Loading history item:", item); // Debug
+    setQuestion(item.question);
+    setShowBreakdown(false); // Close breakdown when loading history
+    setError("");
+    
+    // Parse the full answer to extract recommendations if present
+    const fullAnswer = item.answer;
+    if (fullAnswer && fullAnswer.includes('\n\nRecommendations:\n')) {
+      const parts = fullAnswer.split('\n\nRecommendations:\n');
+      const answerPart = parts[0]; // Just the answer without recommendations
+      const recPart = parts[1]; // The recommendations section
+      
+      setAnswer(answerPart);
+      const recLines = recPart.split(/\n+/).map((l) => l.replace(/^\s*-\s*/, '').trim()).filter(Boolean);
+      setRecommendations(recLines);
+      console.log("Parsed answer:", answerPart); // Debug
+      console.log("Parsed recommendations:", recLines); // Debug
+    } else {
+      setAnswer(fullAnswer);
+      setRecommendations([]);
+      console.log("No recommendations found, full answer:", fullAnswer); // Debug
+    }
+  };
+
+  // Request step-by-step breakdown and related calculations
+  const askForBreakdown = async () => {
+    if (!question.trim()) return;
+    
+    setLoading(true);
+    setError("");
+    setShowBreakdown(true);
+
+    try {
+      const res = await fetch("http://localhost:5000/breakdown", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server error: ${res.status}`);
+      }
+
+      const data = await res.json();
+      setBreakdown(data.breakdown || "No breakdown available.");
+    } catch (err) {
+      setError(`Failed to get breakdown: ${err.message}`);
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Function to format answer lines with proper styling
+  const formatAnswerLine = (line) => {
+    // Check if line contains mathematical operations
+    if (line.includes('=') || line.includes('+') || line.includes('-') || 
+        line.includes('*') || line.includes('/') || line.includes('^')) {
+      return <span className="math-expression">{line}</span>;
+    }
+    // Check if line is a header or important point
+    if (line.endsWith(':') || line.includes('➜') || line.includes('▶')) {
+      return <span className="answer-header">{line}</span>;
+    }
+    return line;
   };
 
   return (
@@ -160,26 +233,94 @@ function App() {
               <div className="result-section">
                 <div className="result-card">
                   <div className="result-header">
-                    <h3>🤔 Your Question:</h3>
-                    <p className="user-question">{question}</p>
+                    <div className="question-icon">❓</div>
+                    <div>
+                      <h3>Your Question</h3>
+                      <p className="user-question">{question}</p>
+                    </div>
                   </div>
-                  <div className="answer-section">
-                    <h3>📊 Answer:</h3>
-                    {answer && (
-                      <ul className="answer-list">
-                        {answer.split(/\r?\n/).filter(Boolean).map((line, idx) => (
-                          <li key={idx}>{line}</li>
-                        ))}
-                      </ul>
-                    )}
+                  
+                  <div className="answer-display">
+                    <div className="answer-header">
+                      <div className="answer-icon">💡</div>
+                      <h3>Answer</h3>
+                    </div>
+                    
+                    <div className="answer-content">
+                      {answer.split(/\r?\n/).filter(Boolean).map((line, idx) => (
+                        <div key={idx} className="answer-line">
+                          <div className="line-number">{idx + 1}</div>
+                          <div className="line-content">
+                            {formatAnswerLine(line)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    
                     {recommendations.length > 0 && (
-                      <div className="recommendations">
-                        <h4>🔎 Recommendations</h4>
-                        <ul>
-                          {recommendations.map((r, i) => (
-                            <li key={i}>{r}</li>
+                      <div className="recommendations-section">
+                        <div className="recommendations-header">
+                          <div className="recommendations-icon">✨</div>
+                          <h3>Recommendations</h3>
+                        </div>
+                        <div className="recommendations-grid">
+                          {recommendations.map((rec, i) => (
+                            <div 
+                              key={i} 
+                              className="recommendation-card"
+                              onClick={() => {
+                                if (rec.toLowerCase().includes('step-by-step') || rec.toLowerCase().includes('breakdown')) {
+                                  askForBreakdown();
+                                }
+                              }}
+                              style={rec.toLowerCase().includes('step-by-step') || rec.toLowerCase().includes('breakdown') ? { cursor: 'pointer' } : {}}
+                            >
+                              <div className="recommendation-number">{i + 1}</div>
+                              <div className="recommendation-content">
+                                <span className="recommendation-icon">✓</span>
+                                {rec}
+                              </div>
+                            </div>
                           ))}
-                        </ul>
+                        </div>
+                      </div>
+                    )}
+                    
+                    <div className="answer-footer">
+                      <div className="stats">
+                        <span className="stat-item">
+                          <span className="stat-icon">📝</span>
+                          {answer.split(/\r?\n/).filter(Boolean).length} lines
+                        </span>
+                        <span className="stat-item">
+                          <span className="stat-icon">⏱️</span>
+                          Generated just now
+                        </span>
+                      </div>
+                    </div>
+
+                    {showBreakdown && breakdown && (
+                      <div className="breakdown-section">
+                        <div className="breakdown-header">
+                          <div className="breakdown-icon">📊</div>
+                          <h3>Step-by-Step Breakdown & Related Calculations</h3>
+                          <button 
+                            onClick={() => setShowBreakdown(false)}
+                            className="close-breakdown"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <div className="breakdown-content">
+                          {breakdown.split(/\r?\n/).filter(Boolean).map((line, idx) => (
+                            <div key={idx} className="breakdown-line">
+                              <div className="breakdown-bullet">→</div>
+                              <div className="breakdown-text">
+                                {line}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -208,7 +349,12 @@ function App() {
               </div>
               <div className="history-list">
                 {history.map((item, index) => (
-                  <div key={index} className="history-card">
+                  <div 
+                    key={index} 
+                    className="history-card"
+                    onClick={() => loadHistoryItem(item)}
+                    style={{ cursor: 'pointer' }}
+                  >
                     <div className="history-content">
                       <div className="history-question">
                         <span className="q-label">Q:</span>
@@ -216,7 +362,9 @@ function App() {
                       </div>
                       <div className="history-answer">
                         <span className="a-label">A:</span>
-                        <span className="answer-text">{item.answer}</span>
+                        <span className="answer-text">
+                          {item.answer.split('\n\nRecommendations:\n')[0]}
+                        </span>
                       </div>
                     </div>
                     <div className="history-time">

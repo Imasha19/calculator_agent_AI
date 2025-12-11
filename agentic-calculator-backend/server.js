@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { runAgent } from "./agent.js";
+import { runAgent, getBreakdown } from "./agent.js";
 
 dotenv.config();
 
@@ -20,6 +20,21 @@ app.post("/ask", async (req, res) => {
     res.json({ answer });
   } catch (error) {
     console.error("Agent error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/breakdown", async (req, res) => {
+  const { question } = req.body;
+  if (!question) return res.status(400).json({ error: "Question is required" });
+
+  try {
+    console.log("Received breakdown request:", question);
+    const breakdown = await getBreakdown(question);
+    console.log("Breakdown:", breakdown);
+    res.json({ breakdown });
+  } catch (error) {
+    console.error("Breakdown error:", error);
     res.status(500).json({ error: error.message });
   }
 });

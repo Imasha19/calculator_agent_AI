@@ -143,3 +143,75 @@ function isBalancedParentheses(str) {
   }
   return count === 0;
 }
+
+// Export breakdown function
+export async function getBreakdown(prompt) {
+  try {
+    const mathExpression = extractAndProcessExpression(prompt);
+    
+    if (!mathExpression) {
+      return "Unable to extract a mathematical expression from your question.";
+    }
+    
+    const steps = [];
+    
+    // Parse the original prompt to show intent
+    steps.push(`Question: ${prompt}`);
+    steps.push(`Expression: ${mathExpression}`);
+    steps.push("");
+    
+    // Show step-by-step evaluation based on expression type
+    if (mathExpression.includes('Math.pow')) {
+      steps.push("Step 1: Evaluate exponentiation (highest priority)");
+      const expMatch = mathExpression.match(/Math\.pow\(([^,]+),(\d+(?:\.\d+)?)\)/);
+      if (expMatch) {
+        const base = parseFloat(expMatch[1]);
+        const exp = parseFloat(expMatch[2]);
+        const expResult = Math.pow(base, exp);
+        steps.push(`  → ${base}^${exp} = ${expResult}`);
+      }
+    }
+    
+    if (/[*/]/.test(mathExpression)) {
+      steps.push("Step 2: Evaluate multiplication and division (left to right)");
+      steps.push("  → Apply * and / operations from left to right");
+    }
+    
+    if (/[+\-]/.test(mathExpression)) {
+      steps.push("Step 3: Evaluate addition and subtraction (left to right)");
+      steps.push("  → Apply + and - operations from left to right");
+    }
+    
+    // Evaluate final result
+    try {
+      const result = Function('"use strict"; const Math = globalThis.Math; return (' + mathExpression + ')')();
+      const formattedResult = Number.isInteger(result) ? result : parseFloat(Number(result).toPrecision(12));
+      steps.push("");
+      steps.push(`Final Result: ${formattedResult}`);
+    } catch (e) {
+      steps.push("Error evaluating expression: " + e.message);
+    }
+    
+    steps.push("");
+    steps.push("Related Calculations:");
+    
+    // Generate related calculations based on the expression
+    const numbers = mathExpression.match(/\d+(?:\.\d+)?/g) || [];
+    if (numbers.length >= 2) {
+      const num1 = parseFloat(numbers[0]);
+      const num2 = parseFloat(numbers[numbers.length - 1]);
+      
+      steps.push(`  → ${num1} + ${num2} = ${num1 + num2}`);
+      steps.push(`  → ${num1} - ${num2} = ${num1 - num2}`);
+      steps.push(`  → ${num1} * ${num2} = ${num1 * num2}`);
+      if (num2 !== 0) {
+        steps.push(`  → ${num1} / ${num2} = ${(num1 / num2).toFixed(2)}`);
+      }
+    }
+    
+    return steps.join("\n");
+  } catch (error) {
+    console.error("Breakdown error:", error);
+    throw new Error(`Failed to generate breakdown: ${error.message}`);
+  }
+}
