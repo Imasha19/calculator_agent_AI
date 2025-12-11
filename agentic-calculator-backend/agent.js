@@ -2,214 +2,439 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// OpenRouter API client
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+async function callOpenRouterAPI(messages, tools = null) {
+  const payload = {
+    model: "tngtech/deepseek-r1t2-chimera:free", // Free tier model
+    messages: messages,
+    temperature: 0.7,
+    max_tokens: 2048,
+  };
+
+  if (tools) {
+    payload.tools = tools;
+  }
+
+  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      "HTTP-Referer": "https://github.com/Imasha19/calculator_agent_AI",
+      "X-Title": "Calculator Agent",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`OpenRouter API error: ${error.error?.message || response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+// Define the tools that Claude can use
+const tools = [
+  {
+    name: "calculate_expression",
+    description:
+      "Evaluates a mathematical expression and returns the result. Supports basic arithmetic (+, -, *, /), exponents (^), parentheses, and percentages.",
+    input_schema: {
+      type: "object",
+      properties: {
+        expression: {
+          type: "string",
+          description:
+            "The mathematical expression to evaluate (e.g., '2^10', '(5+3)*2', '15% of 300')",
+        },
+      },
+      required: ["expression"],
+    },
+  },
+  {
+    name: "solve_equation",
+    description:
+      "Solves simple algebraic equations and word problems that involve mathematical calculations.",
+    input_schema: {
+      type: "object",
+      properties: {
+        problem: {
+          type: "string",
+          description:
+            "The word problem or equation to solve (e.g., 'If John has 5 apples and buys 3 more, how many does he have?')",
+        },
+      },
+      required: ["problem"],
+    },
+  },
+  {
+    name: "convert_units",
+    description:
+      "Converts between different units of measurement (distance, weight, temperature, time, etc.)",
+    input_schema: {
+      type: "object",
+      properties: {
+        value: {
+          type: "number",
+          description: "The value to convert",
+        },
+        from_unit: {
+          type: "string",
+          description:
+            "The unit to convert from (e.g., 'meters', 'feet', 'kg', 'pounds', 'celsius', 'fahrenheit')",
+        },
+        to_unit: {
+          type: "string",
+          description: "The unit to convert to",
+        },
+      },
+      required: ["value", "from_unit", "to_unit"],
+    },
+  },
+];
+
+// Tool execution functions
+function execute_calculate_expression(expression) {
+  try {
+    // Normalize the expression
+    let processed = expression.toLowerCase();
+
+    // Handle percentage calculations
+    processed = processed.replace(
+      /(\d+(?:\.\d+)?)\s*%\s+of\s+(\d+(?:\.\d+)?)/gi,
+      "($1/100)*$2"
+    );
+
+    // Replace word operators
+    processed = processed.replace(/\bplus\b/g, "+");
+    processed = processed.replace(/\bminus\b/g, "-");
+    processed = processed.replace(/\btimes\b/g, "*");
+    processed = processed.replace(/\bdivided\s+by\b/g, "/");
+    processed = processed.replace(/\bpower\b/g, "^");
+
+    // Remove non-math characters except operators and parentheses
+    processed = processed.replace(/[^0-9+\-*/.()^%]/g, " ");
+    processed = processed.replace(/\s+/g, "");
+
+    // Convert exponents
+    processed = processed.replace(
+      /\(([^)]+)\)\^(\d+(?:\.\d+)?)/g,
+      "Math.pow(($1),$2)"
+    );
+    processed = processed.replace(
+      /(\d+(?:\.\d+)?)\^(\d+(?:\.\d+)?)/g,
+      "Math.pow($1,$2)"
+    );
+
+    // Validate and execute
+    if (processed && /\d/.test(processed)) {
+      if (isBalancedParentheses(processed)) {
+        const result = Function(
+          '"use strict"; const Math = globalThis.Math; return (' +
+            processed +
+            ")"
+        )();
+        const formatted = Number.isInteger(result)
+          ? result
+          : parseFloat(Number(result).toPrecision(12));
+
+        return {
+          success: true,
+          expression: processed,
+          result: formatted,
+          original: expression,
+        };
+      }
+    }
+
+    return {
+      success: false,
+      error: "Invalid expression format",
+      original: expression,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      original: expression,
+    };
+  }
+}
+
+function execute_solve_equation(problem) {
+  try {
+    // Extract numbers and operations from the problem
+    const numbers = problem.match(/\d+(?:\.\d+)?/g) || [];
+
+    if (numbers.length === 0) {
+      return {
+        success: false,
+        error: "No numbers found in the problem",
+      };
+    }
+
+    // Common patterns
+    let result = null;
+    let explanation = "";
+
+    // Pattern: "If X ... has Y and ... adds Z" (addition)
+    if (
+      /has|gets|receives|buys|adds|gains/i.test(problem) &&
+      numbers.length >= 2
+    ) {
+      result = parseFloat(numbers[0]) + parseFloat(numbers[1]);
+      explanation = `${numbers[0]} + ${numbers[1]} = ${result}`;
+    }
+
+    // Pattern: "X ... minus/loses/removes Y"
+    if (
+      /removes|loses|takes|minus|subtract|spend/i.test(problem) &&
+      numbers.length >= 2
+    ) {
+      result = parseFloat(numbers[0]) - parseFloat(numbers[1]);
+      explanation = `${numbers[0]} - ${numbers[1]} = ${result}`;
+    }
+
+    // Pattern: "X groups of Y" (multiplication)
+    if (
+      /groups?|times|each|per|multiply|of.*each/i.test(problem) &&
+      numbers.length >= 2
+    ) {
+      result = parseFloat(numbers[0]) * parseFloat(numbers[1]);
+      explanation = `${numbers[0]} × ${numbers[1]} = ${result}`;
+    }
+
+    // Pattern: "X divided among Y" (division)
+    if (
+      /divided|split|shared|among|per|each/i.test(problem) &&
+      numbers.length >= 2
+    ) {
+      result = parseFloat(numbers[0]) / parseFloat(numbers[1]);
+      explanation = `${numbers[0]} ÷ ${numbers[1]} = ${result.toFixed(2)}`;
+    }
+
+    if (result !== null) {
+      return {
+        success: true,
+        problem: problem,
+        result: result,
+        explanation: explanation,
+      };
+    }
+
+    return {
+      success: false,
+      error: "Could not determine the operation from the problem",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+function execute_convert_units(value, from_unit, to_unit) {
+  const conversions = {
+    // Length
+    meter: { feet: 3.28084, kilometers: 0.001, miles: 0.000621371, inches: 39.3701 },
+    feet: { meter: 0.3048, kilometers: 0.0003048, miles: 0.000189394, inches: 12 },
+    kilometers: { meter: 1000, feet: 3280.84, miles: 0.621371, inches: 39370.1 },
+    miles: { meter: 1609.34, feet: 5280, kilometers: 1.60934, inches: 63360 },
+    inches: { meter: 0.0254, feet: 0.0833333, kilometers: 0.0000254, miles: 0.0000157828 },
+
+    // Weight
+    kg: { grams: 1000, pounds: 2.20462, ounces: 35.274 },
+    grams: { kg: 0.001, pounds: 0.00220462, ounces: 0.035274 },
+    pounds: { kg: 0.453592, grams: 453.592, ounces: 16 },
+    ounces: { kg: 0.0283495, grams: 28.3495, pounds: 0.0625 },
+
+    // Temperature (special handling)
+    celsius: { fahrenheit: "special", kelvin: "special" },
+    fahrenheit: { celsius: "special", kelvin: "special" },
+    kelvin: { celsius: "special", fahrenheit: "special" },
+  };
+
+  try {
+    const from = from_unit.toLowerCase();
+    const to = to_unit.toLowerCase();
+
+    if (from === to) {
+      return {
+        success: true,
+        value: value,
+        from_unit: from_unit,
+        to_unit: to_unit,
+        result: value,
+      };
+    }
+
+    // Handle temperature conversions
+    if (
+      ["celsius", "fahrenheit", "kelvin"].includes(from) &&
+      ["celsius", "fahrenheit", "kelvin"].includes(to)
+    ) {
+      let kelvin = value;
+
+      if (from === "celsius") kelvin = value + 273.15;
+      else if (from === "fahrenheit") kelvin = (value - 32) * (5 / 9) + 273.15;
+
+      let result = kelvin;
+      if (to === "celsius") result = kelvin - 273.15;
+      else if (to === "fahrenheit") result = (kelvin - 273.15) * (9 / 5) + 32;
+
+      return {
+        success: true,
+        value: value,
+        from_unit: from_unit,
+        to_unit: to_unit,
+        result: parseFloat(result.toFixed(2)),
+      };
+    }
+
+    // Handle regular conversions
+    if (conversions[from] && conversions[from][to]) {
+      const factor = conversions[from][to];
+      if (factor === "special") {
+        return {
+          success: false,
+          error: "Temperature conversion requires special handling",
+        };
+      }
+
+      const result = value * factor;
+      return {
+        success: true,
+        value: value,
+        from_unit: from_unit,
+        to_unit: to_unit,
+        result: parseFloat(result.toFixed(4)),
+      };
+    }
+
+    return {
+      success: false,
+      error: `Conversion from ${from_unit} to ${to_unit} not supported`,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+function isBalancedParentheses(str) {
+  let count = 0;
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === "(") count++;
+    if (str[i] === ")") count--;
+    if (count < 0) return false;
+  }
+  return count === 0;
+}
+
+// Process tool calls from Claude
+async function processTool(toolName, toolInput) {
+  switch (toolName) {
+    case "calculate_expression":
+      return execute_calculate_expression(toolInput.expression);
+    case "solve_equation":
+      return execute_solve_equation(toolInput.problem);
+    case "convert_units":
+      return execute_convert_units(
+        toolInput.value,
+        toolInput.from_unit,
+        toolInput.to_unit
+      );
+    default:
+      return { error: "Unknown tool" };
+  }
+}
+
+// Main agent function with tool calling
 export async function runAgent(prompt) {
   try {
-    console.log("Processing prompt:", prompt);
+    const messages = [
+      {
+        role: "user",
+        content: `You are a helpful calculator assistant with access to math tools. Solve this problem: ${prompt}`,
+      },
+    ];
+
+    console.log("Calling OpenRouter API with prompt:", prompt);
     
-  // Extract and process the mathematical expression from the prompt
-  const mathExpression = extractAndProcessExpression(prompt);
-  
-  if (mathExpression) {
-    try {
-      // Use Function constructor with Math.pow available
-      const result = Function('"use strict"; const Math = globalThis.Math; return (' + mathExpression + ')')();
-      
-      // Format the result to avoid floating point issues
-      const formattedResult = Number.isInteger(result)
-        ? result
-        : parseFloat(Number(result).toPrecision(12));
-
-      const recommendations = generateRecommendations(mathExpression, result, prompt);
-
-      return `${mathExpression} = ${formattedResult}\n\nRecommendations:\n${recommendations}`;
-    } catch (e) {
-      console.error("Calculation error:", e.message);
-      return `Invalid expression: ${mathExpression}. Please check your math notation.`;
+    // First attempt: Simple calculation without tools
+    const response = await callOpenRouterAPI(messages);
+    
+    let finalResponse = "";
+    
+    if (response.choices && response.choices[0]) {
+      finalResponse = response.choices[0].message.content;
     }
-  }    return `I'm a calculator agent. I can solve:
-- Basic operations: 5 + 3 * 2
-- Parentheses: (10 + 5) * 2
-- Percentages: 15% of 300
-- Exponents: 2^10
-- Complex expressions: 25 * 4 + 18`;
+
+    // Add recommendations
+    const recommendations = generateRecommendations(prompt, finalResponse);
+
+    return `${finalResponse}\n\nRecommendations:\n${recommendations}`;
   } catch (error) {
     console.error("Agent error:", error);
     throw new Error(`Agent processing failed: ${error.message}`);
   }
 }
 
-function generateRecommendations(expression, result, originalPrompt) {
+function generateRecommendations(prompt, response) {
   const recs = [];
 
-  // Parentheses and order of operations
-  if (/[()]/.test(expression)) {
-    recs.push("This expression uses parentheses — operations inside parentheses are evaluated first.");
-  } else if (/[+\-]/.test(expression) && /[*\/]/.test(expression)) {
-    recs.push("Order of operations applied: multiplication/division before addition/subtraction.");
+  if (/percent|%/i.test(prompt)) {
+    recs.push("- Remember: X% of Y = (X/100) × Y");
   }
 
-  // Percentage handling
-  if (/\%|percent|per cent|\bof\b/i.test(originalPrompt)) {
-    // Try to extract simple "X% of Y" pattern for clearer recommendation
-    const m = originalPrompt.match(/(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)/i);
-    if (m) {
-      const pct = parseFloat(m[1]);
-      const base = parseFloat(m[2]);
-      const pctValue = (pct / 100) * base;
-      recs.push(`${pct}% of ${base} = ${pctValue}. Use this to compute relative shares or discounts.`);
-    } else {
-      recs.push("This involves a percentage — remember that X% of Y means (X/100) * Y.");
-    }
+  if (/exponent|power|\^/i.test(prompt)) {
+    recs.push("- For large exponents, consider scientific notation");
   }
 
-  // Exponent handling
-  if (/Math\.pow|\^|\bpower\b/i.test(originalPrompt) || /Math\.pow/.test(expression)) {
-    recs.push("Exponentiation detected — e.g. 2^10 = 1024. For large exponents, consider scientific notation.");
+  if (/word problem|math problem/i.test(prompt)) {
+    recs.push("- Break down word problems into steps");
   }
 
-  // Floating point / rounding suggestion
-  if (!Number.isInteger(result)) {
-    const rounded = parseFloat(Number(result).toPrecision(6));
-    recs.push(`Result is a decimal — consider rounding: ${rounded} (rounded to 6 significant digits).`);
+  if (/convert|unit/i.test(prompt)) {
+    recs.push("- Always verify your conversion factors");
   }
 
-  // Large/small numbers suggestion
-  if (Math.abs(result) >= 1e6 || (Math.abs(result) > 0 && Math.abs(result) < 1e-3)) {
-    recs.push("Result has large/small magnitude — scientific notation may be helpful.");
+  if (recs.length === 0) {
+    recs.push("- Try asking for more complex calculations or word problems");
+    recs.push("- You can also request unit conversions");
   }
 
-  // Practical next steps
-  recs.push("Next: verify units (if applicable), try related calculations, or ask for step-by-step breakdown.");
-
-  return recs.map((r) => `- ${r}`).join("\n");
+  return recs.join("\n");
 }
 
-function extractAndProcessExpression(prompt) {
-  let expression = prompt.toLowerCase();
-  
-  // Handle percentage calculations (e.g., "15% of 300" -> "15/100*300")
-  expression = expression.replace(/(\d+(?:\.\d+)?)\s*%\s+of\s+(\d+(?:\.\d+)?)/gi, '($1/100)*$2');
-  expression = expression.replace(/(\d+(?:\.\d+)?)\s*per\s+cent\s+of\s+(\d+(?:\.\d+)?)/gi, '($1/100)*$2');
-  
-  // Replace word operators with symbols
-  expression = expression.replace(/\bplus\b/g, '+');
-  expression = expression.replace(/\bminus\b/g, '-');
-  expression = expression.replace(/\btimes\b/g, '*');
-  expression = expression.replace(/\bdivided\s+by\b/g, '/');
-  expression = expression.replace(/\bdivide\b/g, '/');
-  
-  // Remove question words and extra text
-  expression = expression.replace(/\bwhat\s+is\b/g, '');
-  expression = expression.replace(/\bcalculate\b/g, '');
-  expression = expression.replace(/\bgive\s+answer\s+for\b/g, '');
-  expression = expression.replace(/\banswer\s+for\b/g, '');
-  expression = expression.replace(/[?!.]/g, '');
-  
-  // Extract the mathematical expression (keep numbers, operators, parentheses, and caret)
-  let cleaned = expression.replace(/[^0-9+\-*/.()^%]/g, ' ').trim();
-  
-  // Remove excess spaces but keep structure
-  cleaned = cleaned.replace(/\s+/g, '');
-  
-  // Convert exponentiation: handle both simple (2^10) and parenthesized ((15+5)^2) cases
-  // First handle parenthesized base: (expr)^num -> Math.pow((expr),num)
-  cleaned = cleaned.replace(/\(([^)]+)\)\^(\d+(?:\.\d+)?)/g, 'Math.pow(($1),$2)');
-  // Then handle simple base: num^num -> Math.pow(num,num)
-  cleaned = cleaned.replace(/(\d+(?:\.\d+)?)\^(\d+(?:\.\d+)?)/g, 'Math.pow($1,$2)');
-  
-  // Convert percentage of: 15% of 300 -> (15/100)*300 (if not already done)
-  cleaned = cleaned.replace(/(\d+(?:\.\d+)?)%of(\d+(?:\.\d+)?)/g, '($1/100)*$2');
-  
-  // Validate the expression
-  if (cleaned && /\d/.test(cleaned)) {
-    // Check for balanced parentheses
-    if (isBalancedParentheses(cleaned)) {
-      // Check if it has at least one operator or Math function
-      if (/[+\-*/%]|Math\.pow/.test(cleaned)) {
-        return cleaned;
-      }
-    }
-  }
-  
-  return null;
-}
-
-function isBalancedParentheses(str) {
-  let count = 0;
-  for (let i = 0; i < str.length; i++) {
-    if (str[i] === '(') count++;
-    if (str[i] === ')') count--;
-    if (count < 0) return false;
-  }
-  return count === 0;
-}
-
-// Export breakdown function
+// Breakdown function for detailed step-by-step explanation
 export async function getBreakdown(prompt) {
   try {
-    const mathExpression = extractAndProcessExpression(prompt);
+    const messages = [
+      {
+        role: "user",
+        content: `Please provide a detailed step-by-step breakdown of how to solve this problem. Show each step clearly and explain your reasoning: "${prompt}"`,
+      },
+    ];
+
+    console.log("Getting breakdown from OpenRouter for:", prompt);
     
-    if (!mathExpression) {
-      return "Unable to extract a mathematical expression from your question.";
+    const response = await callOpenRouterAPI(messages);
+    
+    let breakdown = `Problem: ${prompt}\n\n`;
+    
+    if (response.choices && response.choices[0]) {
+      breakdown += response.choices[0].message.content;
     }
-    
-    const steps = [];
-    
-    // Parse the original prompt to show intent
-    steps.push(`Question: ${prompt}`);
-    steps.push(`Expression: ${mathExpression}`);
-    steps.push("");
-    
-    // Show step-by-step evaluation based on expression type
-    if (mathExpression.includes('Math.pow')) {
-      steps.push("Step 1: Evaluate exponentiation (highest priority)");
-      const expMatch = mathExpression.match(/Math\.pow\(([^,]+),(\d+(?:\.\d+)?)\)/);
-      if (expMatch) {
-        const base = parseFloat(expMatch[1]);
-        const exp = parseFloat(expMatch[2]);
-        const expResult = Math.pow(base, exp);
-        steps.push(`  → ${base}^${exp} = ${expResult}`);
-      }
-    }
-    
-    if (/[*/]/.test(mathExpression)) {
-      steps.push("Step 2: Evaluate multiplication and division (left to right)");
-      steps.push("  → Apply * and / operations from left to right");
-    }
-    
-    if (/[+\-]/.test(mathExpression)) {
-      steps.push("Step 3: Evaluate addition and subtraction (left to right)");
-      steps.push("  → Apply + and - operations from left to right");
-    }
-    
-    // Evaluate final result
-    try {
-      const result = Function('"use strict"; const Math = globalThis.Math; return (' + mathExpression + ')')();
-      const formattedResult = Number.isInteger(result) ? result : parseFloat(Number(result).toPrecision(12));
-      steps.push("");
-      steps.push(`Final Result: ${formattedResult}`);
-    } catch (e) {
-      steps.push("Error evaluating expression: " + e.message);
-    }
-    
-    steps.push("");
-    steps.push("Related Calculations:");
-    
-    // Generate related calculations based on the expression
-    const numbers = mathExpression.match(/\d+(?:\.\d+)?/g) || [];
-    if (numbers.length >= 2) {
-      const num1 = parseFloat(numbers[0]);
-      const num2 = parseFloat(numbers[numbers.length - 1]);
-      
-      steps.push(`  → ${num1} + ${num2} = ${num1 + num2}`);
-      steps.push(`  → ${num1} - ${num2} = ${num1 - num2}`);
-      steps.push(`  → ${num1} * ${num2} = ${num1 * num2}`);
-      if (num2 !== 0) {
-        steps.push(`  → ${num1} / ${num2} = ${(num1 / num2).toFixed(2)}`);
-      }
-    }
-    
-    return steps.join("\n");
+
+    return breakdown;
   } catch (error) {
     console.error("Breakdown error:", error);
     throw new Error(`Failed to generate breakdown: ${error.message}`);
