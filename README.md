@@ -40,6 +40,12 @@ An intelligent AI-powered calculator agent with a modern web interface that solv
 - Responsive design for desktop and mobile
 - Intuitive keyboard support (Enter to submit)
 
+## 🔔 Recent Changes
+- **UI cleanup (Dec 2025):** Frontend now strips stray backslashes (`\`) and LaTeX delimiters from model output so answers no longer show `\boxed{}` or `\[`/`\]` artifacts.
+- **Duplicate final-answer suppression:** The frontend de-duplicates consecutive identical lines so the boxed or repeated final result from the model appears only once.
+- **OpenRouter integration:** Backend uses an OpenRouter-compatible model; ensure `OPENROUTER_API_KEY` is set in `agentic-calculator-backend/.env` (see `.env.example`).
+- **Note about ports:** Vite may auto-select a different port (e.g. `5174`) if `5173` is occupied — watch the terminal output when running `npm run dev`.
+
 ## 🏗️ Project Structure
 
 ```
